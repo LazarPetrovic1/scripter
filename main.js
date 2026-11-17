@@ -1,8 +1,8 @@
-
 import { app, BrowserWindow, dialog, Menu, protocol, net, ipcMain } from 'electron';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import fontList from 'font-list';
+import { stat } from 'node:fs/promises';
 
 import {
   createDirectory,
@@ -25,9 +25,68 @@ import {
 } from './settings.js';
 
 import { registerTerminalHandlers, cleanupTerminalsForOwner } from './terminal.js';
+import { parseCliArgs, resolveCliPaths } from './cli/index.js';
+import { pathToFileURL } from 'node:url';
+
+let mainWindow = null;
+const pendingCliRequests = [];
 const isDev = process.env.NODE_ENV === 'development';
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
-let mainWindow = null;
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'media',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
+  },
+]);
+
+// CLI / single-instance handling
+
+async function handleCliArgs(args, workingDirectory = process.cwd()) {
+  const parsed = parseCliArgs(args);
+  if (parsed.help || parsed.version) return;
+
+  if (parsed.errors.length) {
+    dialog.showErrorBox('Scripter CLI', parsed.errors.join('\n'));
+    return;
+  }
+
+  const resolvedPaths = resolveCliPaths(parsed.paths, workingDirectory);
+  const directories = [];
+  const files = [];
+
+  for (const target of resolvedPaths) {
+    try {
+      const info = await stat(target);
+      if (info.isDirectory()) directories.push(target);
+      else if (info.isFile()) files.push(target);
+      else dialog.showErrorBox('Scripter', `Unsupported path:\n${target}`);
+    } catch { dialog.showErrorBox('Scripter', `The specified path does not exist:\n${target}`); }
+  }
+
+  // Prefer an explicitly supplied directory.
+  // Otherwise, use the parent of the first file.
+  const workspacePath = directories[0] ?? (files.length ? path.dirname(files[0]) : null);
+  if (!workspacePath && !files.length) return;
+  if (workspacePath) await setWorkspace(workspacePath);
+  pendingCliRequests.push({ workspacePath, files });
+  dispatchPendingCliRequest();
+}
+
+function dispatchPendingCliRequest() {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoading()) return;
+  while (pendingCliRequests.length > 0) {
+    const request = pendingCliRequests.shift();
+    mainWindow.webContents.send('app:open-request', request);
+  }
+}
+
+function focusMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
 
 function assertTrustedSender(event) {
   const frame = event.senderFrame;
@@ -70,6 +129,12 @@ function registerSettingsHandlers() {
       if (!window.isDestroyed()) window.webContents.send('settings:changed', updatedSettings);
     }
     return updatedSettings;
+  });
+  registerHandler('media:get-url', async (filePath) => {
+    const resolvedPath = path.resolve(filePath);
+    const info = await stat(resolvedPath);
+    if (!info.isFile()) throw new Error('Media path is not a file.');
+    return `media://local/?path=${encodeURIComponent(resolvedPath)}`;
   });
 }
 
@@ -172,7 +237,7 @@ function createWindow() {
   const icon = path.join(currentDir, 'icon.png');
   const preloadPath = path.join(currentDir, 'preload.js');
 
-  const window = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1000,
     height: 600,
     minWidth: 800,
@@ -188,36 +253,111 @@ function createWindow() {
       // sandbox: true,
     },
   });
-  mainWindow = window;
-  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  window.setIcon(icon);
-  window.webContents.on('will-navigate', (event, url) => {
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (pendingCliRequests.length > 0) dispatchPendingCliRequest()
+  });
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.setIcon(icon);
+  mainWindow.webContents.on('will-navigate', (event, url) => {
     const devUrl = process.env.ELECTRON_RENDERER_URL;
     if ((devUrl && url.startsWith(devUrl)) || (app.isPackaged && url.startsWith('file://'))) return;
     event.preventDefault();
   });
 
-  if (isDev) void window.loadURL('http://localhost:3000');
-  else void window.loadFile(path.join(currentDir, 'build', 'index.html'), { hash: '' });
+  if (isDev) void mainWindow.loadURL('http://localhost:3000');
+  else void mainWindow.loadFile(path.join(currentDir, 'build', 'index.html'), { hash: '' });
   protocol.handle('audio', async (request) => {
     const audioPath = decodeURIComponent(request.url.slice('audio://'.length));
     return net.fetch(`file://${audioPath}`);
   });
 }
 
-app.whenReady().then(async () => {
-  await initializeSettings();
-  registerFilesystemHandlers();
-  registerWindowEvents();
-  // Register terminal IPC handlers once, not once per window.
-  registerTerminalHandlers(assertTrustedSender);
-  registerSettingsHandlers();
-  createMenu();
-  createWindow();
+ipcMain.on('app:open-request-ready', (event) => {
+  if (event.sender !== mainWindow?.webContents) return;
+  dispatchPendingCliRequest();
 });
 
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
-app.on('before-quit', () => {
-  for (const window of BrowserWindow.getAllWindows()) { cleanupTerminalsForOwner(window.webContents); }
-});
+const initialCliArgs = process.argv.slice(app.isPackaged ? 1 : 2);
+const showHelp = initialCliArgs.includes('--help') || initialCliArgs.includes('-h');
+const showVersion = initialCliArgs.includes('--version') || initialCliArgs.includes('-v');
+
+if (showHelp) {
+  console.log(`
+Scripter - Code Editor
+
+Usage:
+  scripter [path]
+
+Examples:
+  scripter
+  scripter .
+  scripter ./my-project
+  scripter ./src/App.jsx
+
+Options:
+  --help, -h       Show this help
+  --version, -v    Show application version
+  `);
+
+  app.exit(0);
+} else if (showVersion) {
+  console.log(`Scripter ${app.getVersion()}`);
+  app.exit(0);
+} else {
+
+  // --------------------------------------------------
+  // Single-instance lock
+  // --------------------------------------------------
+
+  const gotLock = app.requestSingleInstanceLock();
+  if (!gotLock) app.quit();
+  else {
+    // Another invocation of Scripter.
+    app.on('second-instance', async (event, commandLine, workingDirectory) => {
+      const args = commandLine.slice(app.isPackaged ? 1 : 2);
+      await handleCliArgs(args, workingDirectory);
+      focusMainWindow();
+    });
+
+    // --------------------------------------------------
+    // Application startup
+    // --------------------------------------------------
+
+    app.whenReady().then(async () => {
+      protocol.handle('media', async (request) => {
+        try {
+          const url = new URL(request.url);
+          const mediaPath = url.searchParams.get('path');
+          if (!mediaPath) return new Response('Missing media path', { status: 400 });
+          const resolvedPath = path.resolve(mediaPath);
+          const info = await stat(resolvedPath);
+          if (!info.isFile()) return new Response('Not a file', { status: 404 });
+          return net.fetch(pathToFileURL(resolvedPath).href);
+        } catch (error) {
+          console.error('Media loading failed:', error);
+          return new Response('Could not load media', { status: 500 });
+        }
+      });
+      await initializeSettings();
+      registerFilesystemHandlers();
+      registerWindowEvents();
+      // Register terminal IPC handlers once.
+      registerTerminalHandlers(assertTrustedSender);
+      registerSettingsHandlers();
+      createMenu();
+      // Apply initial CLI arguments before creating the window.
+      await handleCliArgs(initialCliArgs, process.cwd());
+      createWindow();
+    });
+
+    app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+
+    app.on('before-quit', () => {
+      for (const window of BrowserWindow.getAllWindows()) cleanupTerminalsForOwner(window.webContents);
+    });
+  }
+}

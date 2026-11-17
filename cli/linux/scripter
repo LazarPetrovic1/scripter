@@ -1,0 +1,42 @@
+
+#!/usr/bin/env bash
+
+APP="/opt/Scripter/scripter"
+VERSION="1.2.0"
+
+if [[ ! -x "$APP" ]]; then
+    echo "Scripter executable not found: $APP" >&2
+    exit 1
+fi
+
+case "${1:-}" in
+    --help|-h)
+        cat <<'EOF'
+Scripter - Code Editor
+
+Usage:
+  scripter [options] [paths...]
+
+Examples:
+  scripter
+  scripter .
+  scripter ./my-project
+  scripter ./src/App.jsx
+
+Options:
+  --help, -h            Show this help
+  --version, -v         Show application version
+  --verbose             Enable verbose logging
+  -n, --new-window      Open a new application window
+  -r, --reuse-window    Reuse an existing application window
+EOF
+        exit 0
+        ;;
+
+    --version|-v)
+        echo "Scripter $VERSION"
+        exit 0
+        ;;
+esac
+
+exec "$APP" "$@"

@@ -1,7 +1,7 @@
 {
   "type": "module",
   "name": "scripter",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "homepage": "./",
   "main": "main.js",
   "author": "LazarPetrovic1",
@@ -46,7 +46,7 @@
     "start": "concurrently \"cross-env BROWSER=none npm run start:react\" \"wait-on http://127.0.0.1:3000 && cross-env NODE_ENV=development electron .\"",
     "start:react": "react-scripts start",
     "build": "react-scripts build",
-    "package": "cross-env INLINE_RUNTIME_CHUNK=false NODE_ENV=production electron-builder",
+    "package": "cross-env INLINE_RUNTIME_CHUNK=false NODE_ENV=production electron-builder --win nsis",
     "serve": "serve -s build",
     "patch": "node update-version.js --type patch",
     "major": "node update-version.js --type major",
@@ -78,22 +78,32 @@
       "preload.js",
       "settings.js",
       "terminal.js",
-      "update-version.js"
+      "update-version.js",
+      "cli/**/*"
     ],
     "win": {
       "target": [
         "nsis"
       ]
     },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "include": "installer/installer.nsh"
+    },
     "mac": {
       "target": [
-        "dmg"
+        "dmg",
+        "pkg"
       ]
     },
     "linux": {
       "target": [
-        "AppImage"
-      ]
+        "AppImage",
+        "deb",
+        "rpm"
+      ],
+      "category": "Development"
     }
   },
   "browserslist": {

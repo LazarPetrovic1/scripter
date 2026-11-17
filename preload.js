@@ -19,6 +19,13 @@ import { contextBridge, ipcRenderer } from "electron";
     ipcRenderer.on('app:command', listener);
     return () => { ipcRenderer.removeListener('app:command', listener); };
   },
+  onOpenRequest: (callback) => {
+    const listener = (_event, filePath) => callback(filePath);
+    ipcRenderer.on('app:open-request', listener);
+    ipcRenderer.send('app:open-request-ready');
+    return () => { ipcRenderer.removeListener('app:open-request', listener); };
+  },
+  getMediaUrl: (path) => ipcRenderer.invoke('media:get-url', path),
 };
 
 const terminal = {

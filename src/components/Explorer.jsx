@@ -1,6 +1,7 @@
 
 import { useState } from 'react';
 import ContextMenu from './ContextMenu';
+import { addFile, addFolder, refresh } from '../assets';
 
 function basename(path) { return path.split(/[\\/]/).filter(Boolean).pop() || path; }
 
@@ -124,9 +125,15 @@ export default function Explorer({ workspace, files, onRefresh, actions }) {
       <div className="explorer-heading">
         <span>FILE EXPLORER</span>
         <div className="explorer-heading-actions">
-          <button title="New File" onClick={() => actions.createFile(workspace)}>+F</button>
-          <button title="New Folder" onClick={() => actions.createFolder(workspace)}>+D</button>
-          <button title="Refresh" onClick={onRefresh}>↻</button>
+          <button title="New File" onClick={() => actions.createFile(workspace)}>
+            <img src={addFile} width={14} height={16} />
+          </button>
+          <button title="New Folder" onClick={() => actions.createFolder(workspace)}>
+            <img src={addFolder} width={14} height={16} />
+          </button>
+          <button title="Refresh" onClick={onRefresh}>
+            <img src={refresh} width={14} height={16} />
+          </button>
         </div>
       </div>
 

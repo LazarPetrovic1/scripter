@@ -1,0 +1,4 @@
+In order to work, the following must be done:
+
++ make the script executable: sudo chmod +x /usr/local/bin/scripter
++ potentially install a symlink: sudo ln -sf /opt/Scripter/scripter /usr/local/bin/scripter

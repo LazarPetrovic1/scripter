@@ -1,4 +1,4 @@
-import CodeEditor from './CodeEditor.jsx';
+import CodeEditor from './TextEditor.jsx';
 import CommandPalette from './CommandPalette.jsx';
 import ContextMenu from './ContextMenu.jsx';
 import Explorer from './Explorer.jsx';

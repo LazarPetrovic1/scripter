@@ -22,3 +22,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 dist/
+
+arch
+get-arch.ps1
+types-interfaces.ts

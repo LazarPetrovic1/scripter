@@ -1,3 +1,4 @@
+import MediaPreview from './MediaPreview';
 import { useEffect, useRef, useState } from 'react';
 import { minimalSetup, EditorView } from 'codemirror';
 import { EditorState, Compartment, Annotation } from '@codemirror/state';
@@ -10,6 +11,7 @@ import { html } from '@codemirror/lang-html';
 import { css } from '@codemirror/lang-css';
 import { markdown } from '@codemirror/lang-markdown';
 import { oneDark } from '@codemirror/theme-one-dark';
+import { getFileType } from '../utils/filetypes';
 import {
   search,
   openSearchPanel,
@@ -56,7 +58,7 @@ function fontTheme(fontFamily, fontSize) {
   });
 }
 
-export default function CodeEditor({ path, content = '', theme = 'dark', onChange }) {
+function TextEditor({ path, content = '', theme = 'dark', onChange }) {
   const hostRef = useRef(null);
   const viewRef = useRef(null);
   const onChangeRef = useRef(onChange);
@@ -227,4 +229,11 @@ export default function CodeEditor({ path, content = '', theme = 'dark', onChang
       <div className="code-editor" ref={hostRef} />
     </div>
   );
+}
+
+
+export default function CodeEditor(props) {
+  const type = getFileType(props.path);
+  if (['image', 'audio', 'video'].includes(type)) return <MediaPreview path={props.path} />;
+  return <TextEditor {...props} />;
 }

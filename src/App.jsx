@@ -1,5 +1,6 @@
 import { CodeEditor, CommandPalette, Explorer, MenuBar, NameDialog, Titlebar, Settings, SplitView, Terminal } from './components/index.js';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { isMediaFile } from './utils/filetypes.js';
 function basename(path) { return path.split(/[\\/]/).filter(Boolean).pop() || path; }
 
 function joinPath(parent, name) {
@@ -80,6 +81,26 @@ function App() {
     };
   }, []);
 
+  const loadWorkspace = useCallback(async (workspacePath, clearDocuments = true) => {
+    if (!workspacePath) return;
+    setWorkspace(workspacePath);
+
+    if (clearDocuments) {
+      setFiles(() => []);
+      setWorkspaceFiles(() => []);
+      setDocuments(() => []);
+      setActivePath(() => null);
+    }
+
+    const [rootEntries, searchableFiles] = await Promise.all([
+      window.desktop.readDirectory(workspacePath),
+      window.desktop.searchWorkspaceFiles(),
+    ]);
+
+    setFiles(() => rootEntries);
+    setWorkspaceFiles(() => searchableFiles);
+  }, []);
+
   const perform = useCallback(async (action) => {
     try {
       setError('');
@@ -92,35 +113,51 @@ function App() {
   
   const refreshFiles = useCallback(async () => {
     if (!workspace) return;
+
     const [rootEntries, searchableFiles] = await Promise.all([
       window.desktop.readDirectory(workspace),
       window.desktop.searchWorkspaceFiles(),
     ]);
+
     setFiles(rootEntries);
     setWorkspaceFiles(searchableFiles);
   }, [workspace]);
 
+  const openCliRequest = useCallback(async (request) => {
+    if (!request) return;
+    const { workspacePath = null, files: requestedFiles = [] } = request;
+    if (workspacePath) await loadWorkspace(workspacePath);
+    if (requestedFiles.length) {
+      const openedDocuments = await Promise.all(
+        requestedFiles.map(async (filePath) => {
+          const media = isMediaFile(filePath);
+          const content = media ? '' : await window.desktop.readFile(filePath);
+          return { path: filePath, content, savedContent: content, isMedia: media };
+        })
+      );
+
+      setDocuments((current) => {
+        const existingPaths = new Set(current.map((doc) => doc.path));
+        const newDocuments = openedDocuments.filter((doc) => !existingPaths.has(doc.path));
+        return [...current, ...newDocuments];
+      });
+
+      setActivePath(requestedFiles[requestedFiles.length - 1]);
+    }
+  }, [loadWorkspace]);
+
   const openWorkspace = useCallback(async () => {
     const selected = await window.desktop.openWorkspace();
     if (!selected) return;
-    // Clear stale state before loading the newly selected workspace.
-    setWorkspace(selected);
-    setFiles([]);
-    setWorkspaceFiles([]);
-    setDocuments([]);
-    setActivePath(null);
-    const [rootEntries, searchableFiles] = await Promise.all([
-      window.desktop.readDirectory(selected),
-      window.desktop.searchWorkspaceFiles(),
-    ]);
-    setFiles(rootEntries);
-    setWorkspaceFiles(searchableFiles);
-  }, []);
+    await loadWorkspace(selected);
+  }, [loadWorkspace]);
+
 
   const openFile = useCallback(async (path) => {
     const existing = documents.find((doc) => doc.path === path);
     if (existing) { setActivePath(path); return; }
-    const content = await window.desktop.readFile(path);
+    const media = isMediaFile(path);
+    const content = media ? '' : await window.desktop.readFile(path);
     setDocuments((current) => [...current, { path, content, savedContent: content }]);
     setActivePath(path);
   }, [documents]);
@@ -278,17 +315,10 @@ function App() {
       // Next/previous editor tab: Ctrl/Cmd + Tab
       if (modifier && key === 'tab') {
         event.preventDefault();
-
         if (documents.length < 2) return;
-
-        const currentIndex = documents.findIndex(
-          (doc) => doc.path === activePath
-        );
-
+        const currentIndex = documents.findIndex((doc) => doc.path === activePath);
         const direction = event.shiftKey ? -1 : 1;
-        const nextIndex =
-          (currentIndex + direction + documents.length) % documents.length;
-
+        const nextIndex = (currentIndex + direction + documents.length) % documents.length;
         setActivePath(documents[nextIndex].path);
         return;
       }
@@ -301,28 +331,16 @@ function App() {
     };
 
     window.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [
-    perform,
-    openWorkspace,
-    saveFile,
-    closeTab,
-    actions,
-    workspace,
-    documents,
-    activePath,
-  ]);
+    return () => { window.removeEventListener('keydown', handleKeyDown); };
+  }, [perform, openWorkspace, saveFile, closeTab, actions, workspace, documents, activePath]);
 
   useEffect(() => {
-    const unsubscribe = window.desktop.onOpenWorkspace?.(() => {
-      void perform(openWorkspace);
+    const unsubscribe = window.desktop.onOpenRequest((request) => {
+      void perform(() => openCliRequest(request));
     });
 
     return unsubscribe;
-  }, [perform, openWorkspace]);
+  }, [perform, openCliRequest]);
 
   const handleNameConfirm = useCallback(async (name) => {
     const dialog = nameDialog;

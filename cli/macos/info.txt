@@ -1,0 +1,4 @@
+In order to work, the following must be done:
+
++ make it executable: chmod +x scripter
++ install a symlink: sudo ln -sf /Applications/Scripter.app/Contents/MacOS/Scripter /usr/local/bin/scripter
